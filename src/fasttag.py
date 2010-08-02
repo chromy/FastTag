@@ -11,6 +11,7 @@ import webbrowser
 #import PIL
 import wx
 import wx.lib.newevent
+import wx.lib.delayedresult as delayedresult
 #import wx.lib.mixins.listctrl as listmix
 #import thumbnail as TC
 
@@ -43,6 +44,7 @@ url = ''.join(('https://graph.facebook.com/oauth/authorize?'
 class FacebookCtrl(object):
     def __init__(self, window):
         self.window = window
+        self.jobID = 0
         
         self.threads = []
         self.loggedin = False
@@ -50,107 +52,82 @@ class FacebookCtrl(object):
         self.photos = {}
         self.images = {}
         self.fb = facebook.Facebook(FACEBOOK_APP_ID, FACEBOOK_APP_SECRET)
-        self.albumslk = threading.Lock()
-        self.photoslk = threading.Lock()
-        self.imageslk = threading.Lock()
-        self.fblk = threading.Lock()
         
     def loginstart(self):
-        with self.fblk:
-            self.fb.auth.createToken()
-            self.fb.login()
-            webbrowser.open_new_tab(url)
+        self.fb.auth.createToken()
+        self.fb.login()
+        webbrowser.open_new_tab(url)
             
     def logindone(self):
-        if self.loggedin == False:      
-            with self.fblk: 
-                self.fb.auth.getSession()
+        if self.loggedin == False:       
+            self.fb.auth.getSession()
             self.loggedin = True
         
     def getalbums(self):
-
-        thread = GetAlbumsThread(self, self.window)
-        self.get(thread)
+        self.handleGet('albums')
     
     def getphotos(self, aid):
-        thread = GetPhotosThread(self, self.window, aid)
-        self.get(thread)
+        self.handleGet('photos', theaid=aid)
         
     def getimage(self, pid):
-        thread = GetImageThread(self, self.window, pid)
-        self.get(thread)
-        
-    def get(self, thread):
-        self.window.threadcount = self.window.threadcount + 1 
-        thread.start()
+        theurl = self.photos[pid].src_big
+        self.handleGet('image', thepid=pid, theurl=theurl)
         
     def logout(self):
         pass
-        
-      
-class GetAlbumsThread(threading.Thread):
-    def __init__(self, parent, win):
-        threading.Thread.__init__(self)
-        self.parent = parent
-        self.win = win
-    
-    def run(self):
-        fb = self.parent.fb
-        with self.parent.fblk:
-            rawalbums = fb.photos.getAlbums(fb.uid)
-            
-        albums = dict([(a['aid'], Album(a)) for a in rawalbums])
-        
-        with self.parent.albumslk:
-            self.parent.albums = albums
-            
-        evt = FacebookDataEvent(value='albums')
-        wx.PostEvent(self.win, evt)
-          
-class GetPhotosThread(threading.Thread):
-    def __init__(self, parent, win, aid):
-        threading.Thread.__init__(self)
-        self.parent = parent
-        self.win = win
-        self.aid = aid
+                
+    def handleGet(self, task, **kargs): 
+        """Compute result in separate thread, doesn't affect GUI response."""
+        self.jobID += 1
+        print "Starting job %s in producer thread: GUI remains responsive" % self.jobID
+        delayedresult.startWorker(self._resultConsumer, self._resultProducer, 
+                                  wargs=(self.jobID, task), wkwargs=kargs,
+                                  cargs=(task,), ckwargs=kargs, jobID=self.jobID)
+         
+    def _resultProducer(self, jobID, task, theaid=None, thepid=None, theurl=None):
+        """Pretend to be a complex worker function or something that takes 
+        long time to run due to network access etc. GUI will freeze if this 
+        method is not called in separate thread."""
+        if task == 'albums':
+            data = self.fb.photos.getAlbums(self.fb.uid)
+        elif task == 'photos':
+            data = self.fb.photos.get(aid=theaid)
+        elif task == 'image':
+            data = image.retrieveimage(theurl)
+            print data
+        else:
+            raise NotImplementedError
+        return data
 
-    def run(self):
-        fb = self.parent.fb
-        with self.parent.fblk:
-            rawphotos = fb.photos.get(aid=self.aid)
-            
-        photos = dict([(p['pid'],Photo(p)) for p in rawphotos])
-        pids = [p['pid'] for p in rawphotos]
+    def _resultConsumer(self, delayedResult, task, theaid=None, thepid=None, theurl=None):
+        jobID = delayedResult.getJobID()
+        try:
+            result = delayedResult.get()
+        except KeyError: #Exception, exc:
+            #print "Result for job %s raised exception: %s" % (jobID, exc)
+            return
         
-        with self.parent.albumslk:
-            self.parent.albums[self.aid].photos = pids
-            self.parent.albums[self.aid].gotphotos = True
-            self.parent.albums[self.aid].currentphoto = 0 if len(pids) > 0 else None
-            
-        with self.parent.photoslk:
-            self.parent.photos.update(photos)
-            
-        evt = FacebookDataEvent(value='photos', aid=self.aid)
-        wx.PostEvent(self.win, evt)
-        
-class GetImageThread(threading.Thread):
-    def __init__(self, parent, win, pid):
-        threading.Thread.__init__(self)
-        self.parent = parent
-        self.win = win
-        self.pid = pid
-
-    def run(self):
-        with self.parent.photoslk:
-            url = self.parent.photos[self.pid].src_big
-        img = image.retrieveimage(url)
-        with self.parent.imageslk:
-            self.parent.images[self.pid] = img
-            
-        evt = FacebookDataEvent(value='image', pid=self.pid)
-        wx.PostEvent(self.win, evt)
-        
-        
+        #task = result['task']
+        if task == 'albums':
+            albums = dict([(a['aid'], Album(a)) for a in result])
+            self.albums = albums
+            evt = FacebookDataEvent(value=task)
+        elif task == 'photos':
+            rawphotos = result
+            photos = dict([(p['pid'],Photo(p)) for p in rawphotos])
+            pids = [p['pid'] for p in rawphotos]
+            self.albums[theaid].photos = pids
+            self.albums[theaid].gotphotos = True
+            self.albums[theaid].currentphoto = 0 if len(pids) > 0 else None
+            self.photos.update(photos)
+            evt = FacebookDataEvent(value=task, aid=theaid)
+        elif task == 'image':
+            self.images[thepid] = result
+            evt = FacebookDataEvent(value=task, pid=thepid)
+        else:
+            raise NotImplementedError        
+     
+        wx.PostEvent(self.window, evt)
 
 class ImagePanel(wx.Panel):
     """This Panel"""
@@ -364,16 +341,14 @@ class MainWindow(wx.Frame):
         self.fbctrl.getalbums()
 
     def OnForward(self, event):
-        with self.fbctrl.albumslk:
-            pid = self.fbctrl.albums[self.currentalbum].nextphoto()
+        pid = self.fbctrl.albums[self.currentalbum].nextphoto()
         self.currentphoto = pid
         self.UpdateImg()
         self.UpdateLbl()
         
     
     def OnBack(self, event):
-        with self.fbctrl.albumslk:
-            pid = self.fbctrl.albums[self.currentalbum].lastphoto()
+        pid = self.fbctrl.albums[self.currentalbum].lastphoto()
         self.currentphoto = pid
         self.UpdateImg()
         self.UpdateLbl()
@@ -383,8 +358,7 @@ class MainWindow(wx.Frame):
         if event.value == 'albums':
             self.albumch.Enable()
             self.nametoaid = {}
-            with self.fbctrl.albumslk:
-                    self.nametoaid = dict([(a.name, a.aid) for a in self.fbctrl.albums.values()])
+            self.nametoaid = dict([(a.name, a.aid) for a in self.fbctrl.albums.values()])
             print self.nametoaid
             for name in self.nametoaid.keys():    
                 self.albumch.Append(name)
@@ -406,46 +380,42 @@ class MainWindow(wx.Frame):
             self.UpdateLbl()
             
     def UpdateLbl(self):
-        with self.fbctrl.albumslk:
-            album = self.fbctrl.albums[self.currentalbum]
-            if album.gotphotos == True:
-                if len(album.photos) == 0: 
-                    text = 'No Photos'
-                else:
-                    num = self.fbctrl.albums[self.currentalbum].currentphoto
-                    total = len(self.fbctrl.albums[self.currentalbum].photos)
-                    text = ' '.join(('Photo', str(num+1), 'of', str(total)))
+        album = self.fbctrl.albums[self.currentalbum]
+        if album.gotphotos == True:
+            if len(album.photos) == 0: 
+                text = 'No Photos'
             else:
-                text = 'Unknown'
+                num = self.fbctrl.albums[self.currentalbum].currentphoto
+                total = len(self.fbctrl.albums[self.currentalbum].photos)
+                text = ' '.join(('Photo', str(num+1), 'of', str(total)))
+        else:
+            text = 'Unknown'
         self.ctrls.SetText(text)
         
     def UpdateImg(self):
         requesting = False
-        with self.fbctrl.imageslk:
-            try:
-                item = self.fbctrl.images[self.currentphoto]
-            except KeyError:
-                with self.fbctrl.albumslk:
-                    album = self.fbctrl.albums[self.currentalbum]
-                    if album.gotphotos == True:
-                        if len(album.photos) == 0: 
-                            item = 'Album is empty'
-                        else:
-                            item = 'Image Loading'
-                            requesting = True
-                            
-                    else:
-                        item = 'Requesting Photo Data'
+        try:
+            item = self.fbctrl.images[self.currentphoto]
+        except KeyError:
+            album = self.fbctrl.albums[self.currentalbum]
+            if album.gotphotos == True:
+                if len(album.photos) == 0: 
+                    item = 'Album is empty'
+                else:
+                    item = 'Image Loading'
+                    requesting = True
+                    
+            else:
+                item = 'Requesting Photo Data'
         if requesting and self.currentphoto != None:               
             self.RequestImg(self.currentphoto)
         
         self.image.ShowItem(item)
                     
     def GotPhotos(self):
-        with self.fbctrl.albumslk:
-            pids = self.fbctrl.albums[self.currentalbum].photos
-            if len(pids) > 0:
-                self.currentphoto = self.fbctrl.albums[self.currentalbum].thisphoto()
+        pids = self.fbctrl.albums[self.currentalbum].photos
+        if len(pids) > 0:
+            self.currentphoto = self.fbctrl.albums[self.currentalbum].thisphoto()
         self.toberequsted = pids
         requestnow = self.toberequsted[:10]
         self.toberequsted = self.toberequsted[10:]
@@ -455,12 +425,11 @@ class MainWindow(wx.Frame):
         self.currentalbum = aid
         self.currentphoto = None
         gotphotos = False
-        with self.fbctrl.albumslk:
-            if self.fbctrl.albums[self.currentalbum].gotphotos == False:
-                self.fbctrl.getphotos(self.currentalbum)
-            else:
-                gotphotos = True
-        
+        if self.fbctrl.albums[self.currentalbum].gotphotos == False:
+            self.fbctrl.getphotos(self.currentalbum)
+        else:
+            gotphotos = True
+    
         if gotphotos:        
             self.GotPhotos()
         self.UpdateImg()
@@ -532,7 +501,6 @@ class Album(object):
             result = None
         return result
            
-            
 class Photo(object):
     def __init__(self, photodetails):
         for key, value in photodetails.items():
