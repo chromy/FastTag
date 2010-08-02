@@ -85,16 +85,14 @@ class FacebookCtrl(object):
                                   cargs=(task,), ckwargs=kargs, jobID=self.jobID)
          
     def _resultProducer(self, jobID, task, theaid=None, thepid=None, theurl=None):
-        """Pretend to be a complex worker function or something that takes 
-        long time to run due to network access etc. GUI will freeze if this 
-        method is not called in separate thread."""
+        """"""
         if task == 'albums':
             data = self.fb.photos.getAlbums(self.fb.uid)
         elif task == 'photos':
             data = self.fb.photos.get(aid=theaid)
         elif task == 'image':
             data = image.retrieveimage(theurl)
-            print data
+            
         else:
             raise NotImplementedError
         return data
@@ -211,10 +209,6 @@ class CtrlPanel(wx.Panel):
         self.bk = wx.Button(self, id=wx.ID_BACKWARD)
         self.lbl = wx.StaticText(self, -1, 'No Photos', (15, 10))
         
-        #events
-        #self.fwd.Bind(wx.EVT_BUTTON, self.OnLoginButton)
-        #self.bk.Bind(wx.EVT_BUTTON, self.OnLoginDone)
-        
         #Sizers
         self.sizeracross = wx.BoxSizer(wx.HORIZONTAL)
         self.sizerdown = wx.BoxSizer(wx.VERTICAL)
@@ -270,7 +264,6 @@ class MainWindow(wx.Frame):
 
         #buttons
         self.loginbutton = wx.Button(self, label='Login')
-        self.logindone = wx.Button(self, label='Done')
         lblalbum = wx.StaticText(self, -1, "Album Selection:", (15, 10))
         self.albumch = wx.Choice(self, -1, (100, 50), choices=[])
         
@@ -281,13 +274,11 @@ class MainWindow(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.OnCloseWindow)
         self.Bind(EVT_FACEBOOK_DATA, self.OnFacebookData)
         self.loginbutton.Bind(wx.EVT_BUTTON, self.OnLoginButton)
-        self.logindone.Bind(wx.EVT_BUTTON, self.OnLoginDone)
         self.ctrls.fwd.Bind(wx.EVT_BUTTON, self.OnForward)
         self.ctrls.bk.Bind(wx.EVT_BUTTON, self.OnBack)
         self.Bind(wx.EVT_CHOICE, self.EvtChoice, self.albumch)  
         
         #
-        self.logindone.Disable()
         self.albumch.Disable()
 
         #Sizers
@@ -297,7 +288,6 @@ class MainWindow(wx.Frame):
         self.sizerdown = wx.BoxSizer(wx.VERTICAL)
         
         self.sizeracross_login.Add(self.loginbutton, 0, wx.ALL)
-        self.sizeracross_login.Add(self.logindone, 0, wx.ALL)
         self.sizeracross_login.AddSpacer(20,1)
         self.sizeracross_login.Add(lblalbum, 0, wx.ALL|wx.CENTER)
         self.sizeracross_login.AddSpacer(10,1)
@@ -305,7 +295,7 @@ class MainWindow(wx.Frame):
         self.sizeracross_img.Add(self.image, 1, wx.EXPAND)
         self.sizeracross_ctrl.Add(self.ctrls, 1, wx.CENTER)
         
-        self.sizerdown.Add((1,10))
+        self.sizerdown.Add((10,10))
         self.sizerdown.Add(self.sizeracross_login, 0, wx.ALL)
         self.sizerdown.Add((1,10))
         self.sizerdown.Add(self.sizeracross_img, 1, wx.EXPAND)
@@ -328,17 +318,23 @@ class MainWindow(wx.Frame):
         
     def OnLoginButton(self, event):
         if self.fbctrl.loggedin == False:
-            self.loginbutton.Disable()
-            self.logindone.Enable()
-            self.SetStatusText("Wait for Facebook login page too load.")
+            self.SetStatusText("Logging in to Facebook")
             self.fbctrl.loginstart()
-
-    def OnLoginDone(self, event):
-        self.loginbutton.Disable()
-        self.logindone.Enable()
-        self.SetStatusText("Getting Album Data")
-        self.fbctrl.logindone()
-        self.fbctrl.getalbums()
+            
+            dlg = wx.MessageDialog(self, "Login to Facebook then press 'Ok'",
+                'Login',
+                wx.CANCEL | wx.OK 
+                )
+            result = dlg.ShowModal()
+            dlg.Destroy()
+            if result == wx.ID_OK:
+                self.SetStatusText("Getting Album Data...")
+                self.fbctrl.logindone()
+                self.fbctrl.getalbums()
+                self.loginbutton.SetLabel('Logout')
+        else:
+            print 'logout'
+            
 
     def OnForward(self, event):
         pid = self.fbctrl.albums[self.currentalbum].nextphoto()
@@ -367,6 +363,7 @@ class MainWindow(wx.Frame):
             aid = event.aid
             if aid == self.currentalbum:
                 self.GotPhotos()
+                self.UpdateLbl()
             
         elif event.value == 'image':
             pid = event.pid
@@ -472,7 +469,6 @@ class MainWindow(wx.Frame):
         #    time.sleep(0.1)
 
         self.Destroy()
-        
 
 class Album(object):
     def __init__(self, albumdetails, photos=None):
