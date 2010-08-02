@@ -229,9 +229,10 @@ class CtrlPanel(wx.Panel):
         wx.Panel.__init__(self, parent, *args, **kwargs)
         self.parent = parent
         
-        #buttons
+        #
         self.fwd = wx.Button(self, id=wx.ID_FORWARD)
         self.bk = wx.Button(self, id=wx.ID_BACKWARD)
+        self.lbl = wx.StaticText(self, -1, 'No Photos', (15, 10))
         
         #events
         #self.fwd.Bind(wx.EVT_BUTTON, self.OnLoginButton)
@@ -242,7 +243,10 @@ class CtrlPanel(wx.Panel):
         self.sizerdown = wx.BoxSizer(wx.VERTICAL)
         
         self.sizeracross.Add(self.bk, 1, wx.ALL)
-        self.sizeracross.Add((1,1), 1, wx.EXPAND)
+        #self.sizeracross.Add((1,1), 1, wx.EXPAND)
+        self.sizeracross.AddSpacer(20,1)
+        self.sizeracross.Add(self.lbl, 0, wx.ALL|wx.CENTER)
+        self.sizeracross.AddSpacer(20,1)
         self.sizeracross.Add(self.fwd, 1, wx.ALL)
         self.sizerdown.Add(self.sizeracross, 1, wx.ALL)
 
@@ -251,6 +255,9 @@ class CtrlPanel(wx.Panel):
         self.SetAutoLayout(1)
         self.sizerdown.Fit(self)
         
+    def SetText(self, text):
+        self.lbl.SetLabel(text)
+        self.sizerdown.Layout()
         
 class MainWindow(wx.Frame):
     def __init__(self, parent, title):
@@ -361,6 +368,7 @@ class MainWindow(wx.Frame):
             pid = self.fbctrl.albums[self.currentalbum].nextphoto()
         self.currentphoto = pid
         self.UpdateImg()
+        self.UpdateLbl()
         
     
     def OnBack(self, event):
@@ -368,6 +376,7 @@ class MainWindow(wx.Frame):
             pid = self.fbctrl.albums[self.currentalbum].lastphoto()
         self.currentphoto = pid
         self.UpdateImg()
+        self.UpdateLbl()
 
     def OnFacebookData(self, event):
         self.threadcount = self.threadcount - 1
@@ -390,13 +399,26 @@ class MainWindow(wx.Frame):
             self.pendingrequests.discard(pid)
             if len(self.pendingrequests) == 0:
                 if len(self.toberequsted) > 0:
-                    print 'Request Ten'
                     requestnow = self.toberequsted[:10]
-                    print requestnow
                     self.toberequsted = self.toberequsted[10:]
                     self.RequestImg(*requestnow)
             self.UpdateImg()
+            self.UpdateLbl()
             
+    def UpdateLbl(self):
+        with self.fbctrl.albumslk:
+            album = self.fbctrl.albums[self.currentalbum]
+            if album.gotphotos == True:
+                if len(album.photos) == 0: 
+                    text = 'No Photos'
+                else:
+                    num = self.fbctrl.albums[self.currentalbum].currentphoto
+                    total = len(self.fbctrl.albums[self.currentalbum].photos)
+                    text = ' '.join(('Photo', str(num+1), 'of', str(total)))
+            else:
+                text = 'Unknown'
+        self.ctrls.SetText(text)
+        
     def UpdateImg(self):
         requesting = False
         with self.fbctrl.imageslk:
@@ -416,6 +438,7 @@ class MainWindow(wx.Frame):
                         item = 'Requesting Photo Data'
         if requesting and self.currentphoto != None:               
             self.RequestImg(self.currentphoto)
+        
         self.image.ShowItem(item)
                     
     def GotPhotos(self):
@@ -440,6 +463,8 @@ class MainWindow(wx.Frame):
         
         if gotphotos:        
             self.GotPhotos()
+        self.UpdateImg()
+        self.UpdateLbl()
         
     def RequestImg(self, *pids):
         for pid in pids:
