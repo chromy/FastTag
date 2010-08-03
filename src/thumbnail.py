@@ -1,8 +1,3 @@
-'''
-Created on 27 Jun 2010
-
-@author: hex
-'''
 # --------------------------------------------------------------------------- #
 # THUMBNAILCTRL Control wxPython IMPLEMENTATION
 # Python Code By:
