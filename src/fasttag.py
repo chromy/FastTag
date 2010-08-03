@@ -370,8 +370,8 @@ class MainWindow(wx.Frame):
             self.pendingrequests.discard(pid)
             if len(self.pendingrequests) == 0:
                 if len(self.toberequsted) > 0:
-                    requestnow = self.toberequsted[:10]
-                    self.toberequsted = self.toberequsted[10:]
+                    requestnow = self.toberequsted[:40]
+                    self.toberequsted = self.toberequsted[40:]
                     self.RequestImg(*requestnow)
             self.UpdateImg()
             self.UpdateLbl()
