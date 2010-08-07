@@ -8,26 +8,16 @@ import os
 import time
 import threading
 import webbrowser
-#import PIL
 import wx
 import wx.lib.newevent
 import wx.lib.delayedresult as delayedresult
-#import wx.lib.mixins.listctrl as listmix
-#import thumbnail as TC
 
-#import pyfacebook as facebook
 import facebook
 import image
 
 #Got to find a better way to do ident
 FACEBOOK_APP_ID = "137838529566876"
 FACEBOOK_APP_SECRET = "9967dec5239d2180356f6413df87bd53"
-
-#url = ''.join(('https://graph.facebook.com/oauth/authorize?'
-#               'client_id=' + FACEBOOK_APP_ID +'&',
-#               'redirect_uri=http://www.facebook.com/connect/login_success.html&',
-#               'type=user_agent&',
-#               'display=popup'))
 
 url = ''.join(('https://graph.facebook.com/oauth/authorize?'
          'client_id=' + FACEBOOK_APP_ID +'&',
@@ -38,44 +28,42 @@ url = ''.join(('https://graph.facebook.com/oauth/authorize?'
 
 # This creates a new Event class and a EVT binder function
 (FacebookDataEvent, EVT_FACEBOOK_DATA) = wx.lib.newevent.NewEvent()
-#(ForwardEvent, EVT_FORWARD) = wx.lib.newevent.NewEvent()
-#(ForwardEvent, EVT_BACK) = wx.lib.newevent.NewEvent()
 
 class FacebookCtrl(object):
     def __init__(self, window):
         self.window = window
         self.jobID = 0
-        
+
         self.threads = []
         self.loggedin = False
         self.albums = {}
         self.photos = {}
         self.images = {}
         self.fb = facebook.Facebook(FACEBOOK_APP_ID, FACEBOOK_APP_SECRET)
-        
+
     def loginstart(self):
         self.fb.auth.createToken()
         self.fb.login()
         webbrowser.open_new_tab(url)
-            
+
     def logindone(self):
         if self.loggedin == False:       
             self.fb.auth.getSession()
             self.loggedin = True
-        
+
     def getalbums(self):
         self.handleGet('albums')
-    
+
     def getphotos(self, aid):
         self.handleGet('photos', theaid=aid)
-        
+
     def getimage(self, pid):
         theurl = self.photos[pid].src_big
         self.handleGet('image', thepid=pid, theurl=theurl)
-        
+
     def logout(self):
         pass
-                
+
     def handleGet(self, task, **kargs): 
         """Compute result in separate thread, doesn't affect GUI response."""
         self.jobID += 1
@@ -83,7 +71,7 @@ class FacebookCtrl(object):
         delayedresult.startWorker(self._resultConsumer, self._resultProducer, 
                                   wargs=(self.jobID, task), wkwargs=kargs,
                                   cargs=(task,), ckwargs=kargs, jobID=self.jobID)
-         
+
     def _resultProducer(self, jobID, task, theaid=None, thepid=None, theurl=None):
         """"""
         if task == 'albums':
@@ -92,7 +80,7 @@ class FacebookCtrl(object):
             data = self.fb.photos.get(aid=theaid)
         elif task == 'image':
             data = image.retrieveimage(theurl)
-            
+
         else:
             raise NotImplementedError
         return data
@@ -104,7 +92,7 @@ class FacebookCtrl(object):
         except KeyError: #Exception, exc:
             #print "Result for job %s raised exception: %s" % (jobID, exc)
             return
-        
+
         #task = result['task']
         if task == 'albums':
             albums = dict([(a['aid'], Album(a)) for a in result])
@@ -124,24 +112,78 @@ class FacebookCtrl(object):
             evt = FacebookDataEvent(value=task, pid=thepid)
         else:
             raise NotImplementedError        
-     
+
         wx.PostEvent(self.window, evt)
+
+class ImagePanelDC(wx.Panel):
+    """This Panel"""
+    def __init__(self, parent, *args, **kwargs):
+        wx.Panel.__init__(self, parent, *args, **kwargs)
+        self.parent = parent
+
+        #Event
+        self.Bind(wx.EVT_SIZE, self.OnResize)
+        self.Bind(wx.EVT_PAINT,  self.OnPaint)
+
+        #picture
+        self.baseimage = wx.EmptyImage(1, 1, True) 
+        self.bitmap = self.baseimage.ConvertToBitmap()
+        self.showbit = False
+
+    def OnResize(self, event):
+        sw, sh = self.GetSizeTuple()
+        iw, ih = self.baseimage.GetSize()
+        if (sw > iw) and (sh > ih) :
+            nh = ih
+            nw = iw
+        else:
+            if  (sw - iw) < (sh - ih):
+                nh = (sw - iw) + ih
+                nw = sw
+            else:
+                nw = (sh - ih) + iw
+                nh = sh
+
+        if self.showbit == True:
+            self.bitmap = self.baseimage.Scale(nw,nh).ConvertToBitmap()
+        self.Refresh()
+        event.Skip()
+
+    def OnPaint(self,  event):
+        dc = wx.PaintDC(self)
+        brush = wx.Brush('black')
+        dc.SetBackground(brush)
+        dc.Clear()
+        sx,  sy = self.GetSizeTuple()
+        ix,  iy = self.baseimage.GetSize()
+        x,  y = (sx/2)-(ix/2),  (sy/2)-(iy/2)
+        print x ,  y
+        dc.DrawBitmap(self.bitmap,  x,  y, True)
+
+    def ShowItem(self, data):
+        if isinstance(data, str):
+            self.bitshow = False
+        else:
+            self.bitshow = True
+            self.baseimage = data
+            self.bitmap = self.baseimage.ConvertToBitmap()
+        self.Refresh()
 
 class ImagePanel(wx.Panel):
     """This Panel"""
     def __init__(self, parent, *args, **kwargs):
         wx.Panel.__init__(self, parent, *args, **kwargs)
         self.parent = parent
-        
+
         self.SetBackgroundColour((0,0,0))
-        
+
         #Event
         self.Bind(wx.EVT_SIZE, self.OnResize)
-       
+
         #Label
         self.lbl = wx.StaticText(self, -1, '', (15, 10))
         self.lbl.SetForegroundColour((255,255,255))
-        
+
         #picture
         self.baseimage = wx.EmptyImage(1, 1, True) 
         self.bitmap = wx.StaticBitmap(parent=self, bitmap=self.baseimage.ConvertToBitmap())
@@ -152,7 +194,7 @@ class ImagePanel(wx.Panel):
         self.sizerdown = wx.BoxSizer(wx.VERTICAL)
         self.sizeracross.Add(self.bitmap, 1, wx.CENTER)
         self.sizerdown.Add(self.sizeracross, 1, wx.CENTER)
-        
+
         #Layout sizers
         self.SetSizer(self.sizerdown)
         self.SetAutoLayout(1)
@@ -171,11 +213,12 @@ class ImagePanel(wx.Panel):
             else:
                 nw = (sh - ih) + iw
                 nh = sh
-        
+
         if self.bitmap.Shown == True:
-            self.bitmap.SetBitmap(self.baseimage.Scale(nw,nh).ConvertToBitmap())
+            bitmap = self.baseimage.Scale(nw,nh).ConvertToBitmap()
+            self.bitmap.SetBitmap(bitmap)
         self.sizerdown.Layout()
-        
+
         event.Skip()
 
     def ShowItem(self, data):
@@ -190,29 +233,29 @@ class ImagePanel(wx.Panel):
             self.lbl.SetLabel('')
             self.baseimage = data
             self.bitmap.SetBitmap(self.baseimage.ConvertToBitmap())
-            
+
             item = self.bitmap
-            
+
         self.sizeracross.Remove(0)
         self.sizeracross.Add(item, 1, wx.CENTER)
         self.sizerdown.Layout()
-    
-        
+
+
 class CtrlPanel(wx.Panel):
     """This Panel"""
     def __init__(self, parent, *args, **kwargs):
         wx.Panel.__init__(self, parent, *args, **kwargs)
         self.parent = parent
-        
+
         #
         self.fwd = wx.Button(self, id=wx.ID_FORWARD)
         self.bk = wx.Button(self, id=wx.ID_BACKWARD)
         self.lbl = wx.StaticText(self, -1, 'No Photos', (15, 10))
-        
+
         #Sizers
         self.sizeracross = wx.BoxSizer(wx.HORIZONTAL)
         self.sizerdown = wx.BoxSizer(wx.VERTICAL)
-        
+
         self.sizeracross.Add(self.bk, 1, wx.ALL)
         #self.sizeracross.Add((1,1), 1, wx.EXPAND)
         self.sizeracross.AddSpacer(20,1)
@@ -225,22 +268,23 @@ class CtrlPanel(wx.Panel):
         self.SetSizer(self.sizerdown)
         self.SetAutoLayout(1)
         self.sizerdown.Fit(self)
-        
+
     def SetText(self, text):
         self.lbl.SetLabel(text)
+        self.sizeracross.Layout()
         self.sizerdown.Layout()
-        
+
 class MainWindow(wx.Frame):
     def __init__(self, parent, title):
         wx.Frame.__init__(self, parent, title=title, size=(200,100))
-        
+
         #
         self.fbctrl = FacebookCtrl(self)
         self.currentalbum = -1
         self.currentphoto = None
         self.pendingrequests = set()
         self.threadcount = 0
-    
+
         # A StatusBar in the bottom of the window
         self.CreateStatusBar() 
 
@@ -259,14 +303,14 @@ class MainWindow(wx.Frame):
         self.SetMenuBar(menuBar)  # Adding the MenuBar to the Frame content.
 
         #Panels
-        self.image = ImagePanel(self)
+        self.image = ImagePanelDC(self)
         self.ctrls = CtrlPanel(self)
 
         #buttons
         self.loginbutton = wx.Button(self, label='Login')
         lblalbum = wx.StaticText(self, -1, "Album Selection:", (15, 10))
         self.albumch = wx.Choice(self, -1, (100, 50), choices=[])
-        
+
         # Set events.
         self.Bind(EVT_FACEBOOK_DATA, self.OnFacebookData)
         self.Bind(wx.EVT_MENU, self.OnAbout, menuAbout)
@@ -277,7 +321,7 @@ class MainWindow(wx.Frame):
         self.ctrls.fwd.Bind(wx.EVT_BUTTON, self.OnForward)
         self.ctrls.bk.Bind(wx.EVT_BUTTON, self.OnBack)
         self.Bind(wx.EVT_CHOICE, self.EvtChoice, self.albumch)  
-        
+
         #
         self.albumch.Disable()
 
@@ -286,41 +330,42 @@ class MainWindow(wx.Frame):
         self.sizeracross_img = wx.BoxSizer(wx.HORIZONTAL)
         self.sizeracross_ctrl = wx.BoxSizer(wx.HORIZONTAL)
         self.sizerdown = wx.BoxSizer(wx.VERTICAL)
-        
+
         self.sizeracross_login.Add(self.loginbutton, 0, wx.ALL)
         self.sizeracross_login.AddSpacer(20,1)
         self.sizeracross_login.Add(lblalbum, 0, wx.ALL|wx.CENTER)
         self.sizeracross_login.AddSpacer(10,1)
         self.sizeracross_login.Add(self.albumch, 1, wx.ALL)
         self.sizeracross_img.Add(self.image, 1, wx.EXPAND)
-        self.sizeracross_ctrl.Add(self.ctrls, 1, wx.CENTER)
-        
+        #self.sizeracross_ctrl.Add(self.ctrls, 1, wx.CENTER)
+
         self.sizerdown.Add((10,10))
         self.sizerdown.Add(self.sizeracross_login, 0, wx.ALL)
         self.sizerdown.Add((1,10))
         self.sizerdown.Add(self.sizeracross_img, 1, wx.EXPAND)
         self.sizerdown.Add((1,10))
-        self.sizerdown.Add(self.sizeracross_ctrl, 0, wx.CENTER)
+        #self.sizerdown.Add(self.sizeracross_ctrl, 0, wx.CENTER)
+        self.sizerdown.Add(self.ctrls, 0, wx.CENTER)
         self.sizerdown.Add((1,10))
-        
+
         #Layout sizers
         self.SetSizer(self.sizerdown)
         self.SetAutoLayout(1)
         self.sizerdown.Fit(self)
 
         self.Show(True)
-        
+
     def OnAbout(self,e):
         # A message dialog box with an OK button. wx.OK is a standard ID in wxWidgets.
         dlg = wx.MessageDialog( self, "FastTag", "About", wx.OK)
         dlg.ShowModal() # Show it
         dlg.Destroy() # finally destroy it when finished.
-        
+
     def OnLoginButton(self, event):
         if self.fbctrl.loggedin == False:
             self.SetStatusText("Logging in to Facebook")
             self.fbctrl.loginstart()
-            
+
             dlg = wx.MessageDialog(self, "Login to Facebook then press 'Ok'",
                 'Login',
                 wx.CANCEL | wx.OK 
@@ -334,15 +379,14 @@ class MainWindow(wx.Frame):
                 self.loginbutton.SetLabel('Logout')
         else:
             print 'logout'
-            
+
 
     def OnForward(self, event):
         pid = self.fbctrl.albums[self.currentalbum].nextphoto()
         self.currentphoto = pid
         self.UpdateImg()
         self.UpdateLbl()
-        
-    
+
     def OnBack(self, event):
         pid = self.fbctrl.albums[self.currentalbum].lastphoto()
         self.currentphoto = pid
@@ -358,13 +402,13 @@ class MainWindow(wx.Frame):
             print self.nametoaid
             for name in self.nametoaid.keys():    
                 self.albumch.Append(name)
-                    
+
         elif event.value == 'photos':
             aid = event.aid
             if aid == self.currentalbum:
                 self.GotPhotos()
                 self.UpdateLbl()
-            
+
         elif event.value == 'image':
             pid = event.pid
             self.pendingrequests.discard(pid)
@@ -375,7 +419,7 @@ class MainWindow(wx.Frame):
                     self.RequestImg(*requestnow)
             self.UpdateImg()
             self.UpdateLbl()
-            
+
     def UpdateLbl(self):
         album = self.fbctrl.albums[self.currentalbum]
         if album.gotphotos == True:
@@ -388,7 +432,8 @@ class MainWindow(wx.Frame):
         else:
             text = 'Unknown'
         self.ctrls.SetText(text)
-        
+        self.sizerdown.Layout()
+
     def UpdateImg(self):
         requesting = False
         try:
@@ -401,14 +446,14 @@ class MainWindow(wx.Frame):
                 else:
                     item = 'Image Loading'
                     requesting = True
-                    
+
             else:
                 item = 'Requesting Photo Data'
         if requesting and self.currentphoto != None:               
             self.RequestImg(self.currentphoto)
-        
+
         self.image.ShowItem(item)
-                    
+
     def GotPhotos(self):
         pids = self.fbctrl.albums[self.currentalbum].photos
         if len(pids) > 0:
@@ -417,7 +462,7 @@ class MainWindow(wx.Frame):
         requestnow = self.toberequsted[:10]
         self.toberequsted = self.toberequsted[10:]
         self.RequestImg(*requestnow)
-                
+
     def SelectAlbum(self, aid):
         self.currentalbum = aid
         self.currentphoto = None
@@ -426,24 +471,24 @@ class MainWindow(wx.Frame):
             self.fbctrl.getphotos(self.currentalbum)
         else:
             gotphotos = True
-    
+
         if gotphotos:        
             self.GotPhotos()
         self.UpdateImg()
         self.UpdateLbl()
-        
+
     def RequestImg(self, *pids):
         for pid in pids:
             if pid not in self.pendingrequests:
                 self.pendingrequests.add(pid)
                 self.fbctrl.getimage(pid)
-                
+
     def RequestTags(self, *pids):
         for pid in pids:
             if pid not in self.requestedphotos:
                 self.requestedphotos.add(pid)
                 self.fbctrl.getimage(pid)
-                
+
     def OnOpen(self,e):
         """ Open a file"""
         self.dirname = ''
@@ -455,7 +500,7 @@ class MainWindow(wx.Frame):
             self.control.SetValue(f.read())
             f.close()
         dlg.Destroy()
-        
+
     def EvtChoice(self, event):
         name = event.GetString()
         aid = self.nametoaid[name]
@@ -477,7 +522,7 @@ class Album(object):
         self.gotphotos = False
         self.photos = photos if photos != None else []
         self.currentphoto = None
-        
+
     def nextphoto(self):
         if len(self.photos) != 0:
             self.currentphoto = (self.currentphoto + 1) % len(self.photos)
@@ -485,10 +530,10 @@ class Album(object):
         else:
             result = None
         return result
-    
+
     def thisphoto(self):
         return self.photos[self.currentphoto]
-            
+
     def lastphoto(self):
         if len(self.photos) != 0:
             self.currentphoto = (self.currentphoto - 1) % len(self.photos)
@@ -496,17 +541,14 @@ class Album(object):
         else:
             result = None
         return result
-           
+
 class Photo(object):
     def __init__(self, photodetails):
         for key, value in photodetails.items():
             self.__dict__[key] = value
-            
+
 
 if __name__ == '__main__':
     app = wx.App(False)
     frame = MainWindow(None, "FastTag")
     app.MainLoop()
-
-    
-
